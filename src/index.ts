@@ -1,12 +1,18 @@
 import chalk from 'chalk';
-import { existsSync } from 'fs';
 import { globby } from 'globby';
 import { program } from 'commander';
+import { readFile, writeFile } from 'fs/promises';
+import { existsSync, PathLike } from 'fs';
 import { confirm, search } from '@inquirer/prompts';
 import { join, basename, dirname, relative } from 'path/posix';
 
 import { getPackageInfo } from './utils.js';
-import { writeFile } from 'fs/promises';
+
+type RomDetails = {
+  name: string;
+  console: string;
+  path: PathLike;
+};
 
 try {
   const { name, version, description } = await getPackageInfo();
@@ -18,11 +24,14 @@ try {
     .action(async () => {
       const workingDir = process.cwd();
       const romDir = join(workingDir, 'roms');
-      const favoriteDir = join(workingDir, 'MUOS', 'info', 'favourite');
+      const infoDir = join(workingDir, 'MUOS', 'info');
+      const coreDir = (platform: string): string =>
+        join(infoDir, 'core', platform);
+      const favoriteDir = join(infoDir, 'favourite');
       const romGlobber = globby(
         relative(process.cwd(), join(romDir, '**', '*.7z'))
       );
-      const favoritesToAdd: string[] = [];
+      const favoritesToAdd: RomDetails[] = [];
 
       if (!existsSync(romDir) || !existsSync(favoriteDir)) {
         console.log(
@@ -32,14 +41,11 @@ try {
         return;
       }
 
-      while (
-        await confirm({
-          message: 'Add another favorite?',
-          default: true
-        })
-      ) {
-        const selectedRom = await search<string>({
-          message: 'Select a ROM or press Enter to finish',
+      let keepGoing = true;
+
+      while (keepGoing) {
+        const selectedRom = await search<RomDetails>({
+          message: 'Enter a game name to search for',
           source: async (input) => {
             if (!input) {
               return [];
@@ -47,17 +53,19 @@ try {
 
             const results = [];
 
-            for (const romPath of await romGlobber) {
+            for (const romPath of (await romGlobber).filter((val) =>
+              val.toLowerCase().includes(input.toLowerCase())
+            )) {
               const console = basename(dirname(romPath));
-              const filename = basename(romPath, '.7z');
-
-              if (!filename.toLowerCase().includes(input.toLowerCase())) {
-                continue;
-              }
+              const name = basename(romPath, '.7z');
 
               results.push({
-                name: filename,
-                value: romPath,
+                name,
+                value: {
+                  console,
+                  name,
+                  path: romPath
+                },
                 description: console
               });
             }
@@ -67,6 +75,11 @@ try {
         });
 
         favoritesToAdd.push(selectedRom);
+
+        keepGoing = await confirm({
+          message: 'Add another favorite?',
+          default: true
+        });
       }
 
       if (!favoritesToAdd.length) {
@@ -74,18 +87,33 @@ try {
         return;
       }
 
-      for (const romPath of favoritesToAdd) {
-        const favoritePath = join(
-          favoriteDir,
-          `${basename(romPath, '.7z')}.cfg`
-        );
+      for (const { console, name } of favoritesToAdd) {
+        const filename = `${name}.cfg`;
+        const configPath = join(coreDir(console), filename);
+        const favoritePath = join(favoriteDir, filename);
+        const coreConfigPath = join(coreDir(console), 'core.cfg');
+        const coreConfig = await readFile(coreConfigPath, 'utf-8');
 
         await writeFile(
+          configPath,
+          `${name}
+${coreConfig.trim()}
+/mnt/sdcard/ROMS/
+${console}
+${name}.7z
+`,
+          'utf-8'
+        );
+        await writeFile(
           favoritePath,
-          romPath.replace('roms/', '/mnt/mmc/roms/'),
+          `/run/muos/storage/info/core/${console}/${name}.cfg`,
           'utf-8'
         );
       }
+
+      console.log(
+        `Successfully created ${chalk.green(favoritesToAdd.length)} favorite entries!`
+      );
     })
     .parseAsync();
 } catch (error) {
