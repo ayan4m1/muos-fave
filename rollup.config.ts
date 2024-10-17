@@ -1,7 +1,7 @@
 import terser from '@rollup/plugin-terser';
 import shebang from 'rollup-plugin-shebang-bin';
 import typescript from '@rollup/plugin-typescript';
-import nodeResolve from '@rollup/plugin-node-resolve';
+import { nodeResolve } from '@rollup/plugin-node-resolve';
 import autoExternal from 'rollup-plugin-auto-external';
 
 const plugins = [
